@@ -66,11 +66,11 @@ fn test_cupsfilter_and_pure_rust_raster_decoding() {
             "-m",
             "application/vnd.cups-raster",
             "-o",
-            "FzsDither=Threshold",
+            "Dither=Threshold",
             "-o",
-            "FzsDensity=Dark",
+            "Darkness=Dark",
             "-o",
-            "FzsFeedSteps=Short",
+            "FeedSteps=Short",
             &temp_txt.to_string_lossy(),
         ])
         .output()
