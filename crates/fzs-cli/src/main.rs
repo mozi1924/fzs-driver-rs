@@ -87,7 +87,7 @@ struct PrintArgs {
     #[arg(long, value_enum, default_value_t = CliFitMode::Page)]
     fit: CliFitMode,
     /// Dithering / halftoning algorithm
-    #[arg(long, value_enum, default_value_t = CliDitherMethod::FloydSteinberg)]
+    #[arg(long, value_enum, default_value_t = CliDitherMethod::SmartHybrid)]
     dither: CliDitherMethod,
     /// Binarization threshold for threshold dithering (0-255)
     #[arg(long, default_value_t = 180)]
@@ -160,8 +160,10 @@ impl From<CliFitMode> for HalftoneFit {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Default)]
 enum CliDitherMethod {
+    #[default]
+    SmartHybrid,
     FloydSteinberg,
     Bayer,
     Threshold,
@@ -170,6 +172,7 @@ enum CliDitherMethod {
 impl From<CliDitherMethod> for HalftoneMethod {
     fn from(d: CliDitherMethod) -> Self {
         match d {
+            CliDitherMethod::SmartHybrid => HalftoneMethod::SmartHybrid,
             CliDitherMethod::FloydSteinberg => HalftoneMethod::FloydSteinberg,
             CliDitherMethod::Bayer => HalftoneMethod::Bayer,
             CliDitherMethod::Threshold => HalftoneMethod::Threshold,

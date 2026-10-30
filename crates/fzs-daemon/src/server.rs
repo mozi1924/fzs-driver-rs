@@ -1,6 +1,6 @@
 //! Background TCP AppSocket / JetDirect print daemon for FZS thermal printer.
 
-use fzs_cups::parse_raster_stream;
+use fzs_cups::{parse_raster_pages, RasterPage};
 use fzs_halftone::{prepare_image, DitheringMethod, FitMode, DEFAULT_A4_WIDTH};
 use fzs_protocol::lzo::compress_lzo1x;
 use fzs_protocol::packet::{
@@ -8,7 +8,7 @@ use fzs_protocol::packet::{
     build_paper_spec_packet, build_paper_steps_packet, build_paper_type_packet,
     build_raster_slice_packet,
 };
-use fzs_protocol::status::PrinterStatus;
+use fzs_protocol::status::{PaperType, PrinterStatus};
 use fzs_transport::ble::BleTransport;
 use fzs_transport::config::load_config;
 use fzs_transport::traits::PrinterTransport;
@@ -118,7 +118,7 @@ async fn handle_client(
     }
 
     // 2. Decode pages: first try CUPS / PWG Raster parser
-    let pages: Vec<Vec<Vec<u8>>> = if let Ok(raster_pages) = parse_raster_stream(&job_data) {
+    let pages: Vec<RasterPage> = if let Ok(raster_pages) = parse_raster_pages(&job_data) {
         info!(
             "Decoded {} page(s) from CUPS / PWG raster stream",
             raster_pages.len()
@@ -131,19 +131,27 @@ async fn handle_client(
             dyn_img.width(),
             dyn_img.height()
         );
-        let (chunks, _, _) = prepare_image(
+        let (chunks, w, h) = prepare_image(
             &dyn_img,
             DEFAULT_A4_WIDTH,
             FitMode::Page,
             3292,
             2380,
             true,
-            DitheringMethod::FloydSteinberg,
+            DitheringMethod::SmartHybrid,
             180,
             false,
             false,
         );
-        vec![chunks]
+        vec![RasterPage {
+            chunks,
+            dither_method: DitheringMethod::SmartHybrid,
+            density: 180,
+            paper_type: None,
+            feed_steps: None,
+            width: w,
+            height: h,
+        }]
     } else {
         return Err(format!(
             "Unrecognized print stream format (magic={:?})",
@@ -165,9 +173,9 @@ async fn handle_client(
     let target_mac = mac_override.as_deref().or(cfg.printer.mac.as_deref());
     let target_model = model_override.as_deref().or(Some(&cfg.printer.model[..]));
 
-    let feed_steps = cfg.printer.feed_steps;
-    let density = cfg.printer.density;
-    let paper_type = cfg.printer.paper_type;
+    let default_feed_steps = cfg.printer.feed_steps;
+    let default_density = cfg.printer.density;
+    let default_paper_type = cfg.printer.paper_type;
     let paper_spec = cfg.printer.paper_spec;
 
     // 4. Acquire printer connection
@@ -181,13 +189,30 @@ async fn handle_client(
 
     // 5. Print each page
     let total_pages = pages.len();
-    for (page_idx, chunks) in pages.iter().enumerate() {
+    for (page_idx, page) in pages.iter().enumerate() {
+        let density = if page.density > 0 {
+            page.density
+        } else {
+            default_density
+        };
+        let paper_type = match page.paper_type {
+            Some(0) => PaperType::Continuous,
+            Some(1) => PaperType::Folded,
+            _ => default_paper_type,
+        };
+        let feed_steps = page
+            .feed_steps
+            .filter(|&s| s > 0)
+            .unwrap_or(default_feed_steps);
+
         info!(
-            "Printing page {}/{} ({} slices, density={}, feed_steps={})...",
+            "Printing page {}/{} ({} slices, dither={:?}, density={}, paper_type={:?}, feed_steps={})...",
             page_idx + 1,
             total_pages,
-            chunks.len(),
+            page.chunks.len(),
+            page.dither_method,
             density,
+            paper_type,
             feed_steps
         );
 
@@ -216,7 +241,7 @@ async fn handle_client(
             .await?;
 
         // f. Transmit all slices with LZO1X compression
-        for chunk in chunks {
+        for chunk in &page.chunks {
             let compressed =
                 compress_lzo1x(chunk).map_err(|e| format!("LZO compression error: {}", e))?;
             let pkt = build_raster_slice_packet(&compressed);

@@ -70,6 +70,49 @@ pub const DEFAULT_PPD_CONTENT: &str = r#"*PPD-Adobe: "4.3"
 *ColorModel Gray/Grayscale (8-bit): "<</cupsColorSpace 0/cupsColorOrder 0/cupsBitsPerColor 8/cupsBitsPerPixel 8>>setpagedevice"
 *ColorModel FastGray/Monochrome (1-bit): "<</cupsColorSpace 0/cupsColorOrder 0/cupsBitsPerColor 1/cupsBitsPerPixel 1>>setpagedevice"
 *CloseUI: *ColorModel
+
+*OpenGroup: PrintQuality/Print Quality
+
+*OpenUI *FzsDither/Dithering Algorithm: PickOne
+*OrderDependency: 20 AnySetup *FzsDither
+*DefaultFzsDither: Auto
+*FzsDither Auto/Smart Hybrid (Text & Graphics): "<</cupsInteger0 0>>setpagedevice"
+*FzsDither FloydSteinberg/Floyd-Steinberg (Photos): "<</cupsInteger0 1>>setpagedevice"
+*FzsDither Bayer/Bayer 4x4 (Pattern): "<</cupsInteger0 2>>setpagedevice"
+*FzsDither Threshold/Sharp Threshold (Text only): "<</cupsInteger0 3>>setpagedevice"
+*CloseUI: *FzsDither
+
+*OpenUI *FzsDensity/Heating Density: PickOne
+*OrderDependency: 20 AnySetup *FzsDensity
+*DefaultFzsDensity: Normal
+*FzsDensity VeryLight/Very Light (140): "<</cupsInteger1 140>>setpagedevice"
+*FzsDensity Light/Light (160): "<</cupsInteger1 160>>setpagedevice"
+*FzsDensity Normal/Normal (180): "<</cupsInteger1 180>>setpagedevice"
+*FzsDensity Dark/Dark (200): "<</cupsInteger1 200>>setpagedevice"
+*FzsDensity VeryDark/Very Dark (220): "<</cupsInteger1 220>>setpagedevice"
+*CloseUI: *FzsDensity
+
+*CloseGroup: PrintQuality
+
+*OpenGroup: MediaHandling/Media Handling
+
+*OpenUI *FzsPaperType/Paper Feeding: PickOne
+*OrderDependency: 20 AnySetup *FzsPaperType
+*DefaultFzsPaperType: Continuous
+*FzsPaperType Continuous/Continuous Roll: "<</cupsInteger2 0>>setpagedevice"
+*FzsPaperType Folded/Fanfold Perforated: "<</cupsInteger2 1>>setpagedevice"
+*CloseUI: *FzsPaperType
+
+*OpenUI *FzsFeedSteps/Post-Print Eject Steps: PickOne
+*OrderDependency: 20 AnySetup *FzsFeedSteps
+*DefaultFzsFeedSteps: Default
+*FzsFeedSteps Default/Automatic (By Model): "<</cupsInteger3 0>>setpagedevice"
+*FzsFeedSteps Short/Short (100 steps): "<</cupsInteger3 100>>setpagedevice"
+*FzsFeedSteps Normal/Standard (162 steps): "<</cupsInteger3 162>>setpagedevice"
+*FzsFeedSteps Long/Long (250 steps): "<</cupsInteger3 250>>setpagedevice"
+*CloseUI: *FzsFeedSteps
+
+*CloseGroup: MediaHandling
 "#;
 
 /// Write embedded PPD to specified path or return standard temporary path.

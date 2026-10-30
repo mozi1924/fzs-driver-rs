@@ -58,5 +58,33 @@ fn test_cupsfilter_and_pure_rust_raster_decoding() {
         }
     }
 
+    // Test with custom options
+    if let Ok(output) = Command::new("cupsfilter")
+        .args([
+            "-p",
+            &ppd_path.to_string_lossy(),
+            "-m",
+            "application/vnd.cups-raster",
+            "-o",
+            "FzsDither=Threshold",
+            "-o",
+            "FzsDensity=Dark",
+            "-o",
+            "FzsFeedSteps=Short",
+            &temp_txt.to_string_lossy(),
+        ])
+        .output()
+    {
+        if output.status.success() {
+            let structured_pages = fzs_cups::parse_raster_pages(&output.stdout)
+                .expect("parse structured raster pages");
+            assert_eq!(structured_pages.len(), 1);
+            let p0 = &structured_pages[0];
+            assert_eq!(p0.dither_method, fzs_halftone::DitheringMethod::Threshold);
+            assert_eq!(p0.density, 200);
+            assert_eq!(p0.feed_steps, Some(100));
+        }
+    }
+
     let _ = fs::remove_file(temp_txt);
 }

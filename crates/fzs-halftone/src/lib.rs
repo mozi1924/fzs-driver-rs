@@ -10,8 +10,8 @@ pub use aspect::{
     MOTOR_ASPECT_RATIO,
 };
 pub use dither::{
-    binarize, binarize_bayer, binarize_floyd_steinberg, binarize_threshold, DitheringMethod,
-    BAYER_4X4,
+    binarize, binarize_bayer, binarize_floyd_steinberg, binarize_smart_hybrid,
+    binarize_smart_hybrid_with_params, binarize_threshold, DitheringMethod, BAYER_4X4,
 };
 pub use packer::{
     group_rows_into_chunks, pack_pixels_to_rows, prepare_image, BYTES_PER_ROW, CHUNK_SIZE,

@@ -10,7 +10,7 @@
 
 use byteorder::{BigEndian, ByteOrder, LittleEndian};
 use fzs_halftone::{
-    binarize_floyd_steinberg, group_rows_into_chunks, pack_pixels_to_rows, BYTES_PER_ROW,
+    binarize, group_rows_into_chunks, pack_pixels_to_rows, DitheringMethod, BYTES_PER_ROW,
     DEFAULT_A4_WIDTH,
 };
 use image::GrayImage;
@@ -39,6 +39,10 @@ pub struct RasterPageHeader {
     pub color_space: u32,
     pub is_big_endian: bool,
     pub is_pwg: bool,
+    pub dither_method: DitheringMethod,
+    pub density: u16,
+    pub paper_type: Option<u8>,
+    pub feed_steps: Option<u16>,
 }
 
 impl RasterPageHeader {
@@ -61,30 +65,77 @@ impl RasterPageHeader {
         let raw_le_width = LittleEndian::read_u32(&buf[372..376]);
         let use_big_endian = raw_le_width > 100_000;
 
-        let (width, height, bits_per_color, bits_per_pixel, bytes_per_line, color_space) =
-            if use_big_endian {
-                (
-                    BigEndian::read_u32(&buf[372..376]),
-                    BigEndian::read_u32(&buf[376..380]),
-                    BigEndian::read_u32(&buf[384..388]),
-                    BigEndian::read_u32(&buf[388..392]),
-                    BigEndian::read_u32(&buf[392..396]),
-                    BigEndian::read_u32(&buf[400..404]),
-                )
-            } else {
-                (
-                    raw_le_width,
-                    LittleEndian::read_u32(&buf[376..380]),
-                    LittleEndian::read_u32(&buf[384..388]),
-                    LittleEndian::read_u32(&buf[388..392]),
-                    LittleEndian::read_u32(&buf[392..396]),
-                    LittleEndian::read_u32(&buf[400..404]),
-                )
-            };
+        let (
+            width,
+            height,
+            bits_per_color,
+            bits_per_pixel,
+            bytes_per_line,
+            color_space,
+            int0,
+            int1,
+            int2,
+            int3,
+        ) = if use_big_endian {
+            (
+                BigEndian::read_u32(&buf[372..376]),
+                BigEndian::read_u32(&buf[376..380]),
+                BigEndian::read_u32(&buf[384..388]),
+                BigEndian::read_u32(&buf[388..392]),
+                BigEndian::read_u32(&buf[392..396]),
+                BigEndian::read_u32(&buf[400..404]),
+                BigEndian::read_u32(&buf[452..456]),
+                BigEndian::read_u32(&buf[456..460]),
+                BigEndian::read_u32(&buf[460..464]),
+                BigEndian::read_u32(&buf[464..468]),
+            )
+        } else {
+            (
+                raw_le_width,
+                LittleEndian::read_u32(&buf[376..380]),
+                LittleEndian::read_u32(&buf[384..388]),
+                LittleEndian::read_u32(&buf[388..392]),
+                LittleEndian::read_u32(&buf[392..396]),
+                LittleEndian::read_u32(&buf[400..404]),
+                LittleEndian::read_u32(&buf[452..456]),
+                LittleEndian::read_u32(&buf[456..460]),
+                LittleEndian::read_u32(&buf[460..464]),
+                LittleEndian::read_u32(&buf[464..468]),
+            )
+        };
 
         if width == 0 || height == 0 || bytes_per_line == 0 {
             return Ok(None);
         }
+
+        // cupsInteger[0]: Dither method (0=SmartHybrid, 1=FloydSteinberg, 2=Bayer, 3=Threshold)
+        let dither_method = match int0 {
+            1 => DitheringMethod::FloydSteinberg,
+            2 => DitheringMethod::Bayer,
+            3 => DitheringMethod::Threshold,
+            _ => DitheringMethod::SmartHybrid,
+        };
+
+        // cupsInteger[1]: Thermal heating density (140-220, default 180)
+        let density = if (100..=255).contains(&int1) {
+            int1 as u16
+        } else {
+            180
+        };
+
+        // cupsInteger[2]: Paper type (0=Continuous, 1=Folded)
+        let paper_type = match int2 {
+            0 => Some(0),
+            1 => Some(1),
+            _ => None,
+        };
+
+        // cupsInteger[3]: Eject steps
+        let feed_steps = if int3 > 0 && int3 <= 1000 {
+            Some(int3 as u16)
+        } else {
+            None
+        };
 
         Ok(Some(Self {
             width,
@@ -95,8 +146,31 @@ impl RasterPageHeader {
             color_space,
             is_big_endian,
             is_pwg,
+            dither_method,
+            density,
+            paper_type,
+            feed_steps,
         }))
     }
+}
+
+/// Fully decoded print page with hardware-ready slices and parsed job options.
+#[derive(Debug, Clone)]
+pub struct RasterPage {
+    /// 416-byte raw slices ready for LZO compression & printer transmission
+    pub chunks: Vec<Vec<u8>>,
+    /// Dithering algorithm selected for this page (from PPD or default)
+    pub dither_method: DitheringMethod,
+    /// Thermal heating density (140-220, default 180)
+    pub density: u16,
+    /// Paper feed type (0 = Continuous, 1 = Folded), or None
+    pub paper_type: Option<u8>,
+    /// Post-print eject steps, or None for printer model default
+    pub feed_steps: Option<u16>,
+    /// Raster image width in dots
+    pub width: u32,
+    /// Raster image height in dots
+    pub height: u32,
 }
 
 /// Decode a PackBits compressed line in PWG raster.
@@ -139,8 +213,8 @@ fn decode_packbits_line(
     Ok(out)
 }
 
-/// Pure Rust decoder for CUPS / PWG raster streams into pages of 416-byte raw chunks.
-pub fn parse_raster_stream(data: &[u8]) -> Result<Vec<Vec<Vec<u8>>>, RasterError> {
+/// Pure Rust decoder for CUPS / PWG raster streams into structured `RasterPage` objects.
+pub fn parse_raster_pages(data: &[u8]) -> Result<Vec<RasterPage>, RasterError> {
     if data.len() < 4 {
         return Err(RasterError::UnexpectedEof);
     }
@@ -171,12 +245,14 @@ pub fn parse_raster_stream(data: &[u8]) -> Result<Vec<Vec<Vec<u8>>>, RasterError
 
     while let Some(header) = RasterPageHeader::read_from(&mut cursor, is_pwg, is_big_endian)? {
         debug!(
-            "Raster page decoded: {}x{} dots, bpp={}, bpl={}, cspace={}",
+            "Raster page decoded: {}x{} dots, bpp={}, bpl={}, cspace={}, dither={:?}, density={}",
             header.width,
             header.height,
             header.bits_per_pixel,
             header.bytes_per_line,
-            header.color_space
+            header.color_space,
+            header.dither_method,
+            header.density
         );
 
         let mut raw_rows: Vec<Vec<u8>> = Vec::with_capacity(header.height as usize);
@@ -212,7 +288,7 @@ pub fn parse_raster_stream(data: &[u8]) -> Result<Vec<Vec<Vec<u8>>>, RasterError
 
         // Convert page rows into normalized 1664-dot (208 bytes) bit rows
         let normalized_rows = if header.bits_per_pixel == 8 {
-            // 8-bit Grayscale: run Floyd-Steinberg dithering
+            // 8-bit Grayscale: run selected dithering algorithm (SmartHybrid, FloydSteinberg, etc.)
             let mut gray_img = GrayImage::new(header.width, header.height);
             for (y, row) in raw_rows.iter().enumerate() {
                 for (x, &lum) in row.iter().take(header.width as usize).enumerate() {
@@ -220,7 +296,7 @@ pub fn parse_raster_stream(data: &[u8]) -> Result<Vec<Vec<Vec<u8>>>, RasterError
                     gray_img.put_pixel(x as u32, y as u32, image::Luma([lum]));
                 }
             }
-            let bits = binarize_floyd_steinberg(&gray_img);
+            let bits = binarize(&gray_img, header.dither_method, 180);
             pack_pixels_to_rows(&bits, header.width, header.height)
         } else {
             // 1-bit Monochrome: normalize row length to 208 bytes
@@ -255,14 +331,31 @@ pub fn parse_raster_stream(data: &[u8]) -> Result<Vec<Vec<Vec<u8>>>, RasterError
         // Group rows into 416-byte raw chunks
         let chunks = group_rows_into_chunks(&final_rows, DEFAULT_A4_WIDTH);
         info!(
-            "Page assembled: {} slices ({} bytes)",
+            "Page assembled: {} slices ({} bytes, dither={:?}, density={})",
             chunks.len(),
-            chunks.len() * 416
+            chunks.len() * 416,
+            header.dither_method,
+            header.density
         );
-        pages.push(chunks);
+
+        pages.push(RasterPage {
+            chunks,
+            dither_method: header.dither_method,
+            density: header.density,
+            paper_type: header.paper_type,
+            feed_steps: header.feed_steps,
+            width: header.width,
+            height: header.height,
+        });
     }
 
     Ok(pages)
+}
+
+/// Pure Rust decoder for CUPS / PWG raster streams into pages of 416-byte raw chunks.
+pub fn parse_raster_stream(data: &[u8]) -> Result<Vec<Vec<Vec<u8>>>, RasterError> {
+    let pages = parse_raster_pages(data)?;
+    Ok(pages.into_iter().map(|p| p.chunks).collect())
 }
 
 #[cfg(test)]
