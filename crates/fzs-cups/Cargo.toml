@@ -1,0 +1,18 @@
+[package]
+name = "fzs-cups"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+fzs-protocol.workspace = true
+fzs-halftone.workspace = true
+byteorder.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+serde.workspace = true
+dirs.workspace = true
+image.workspace = true
+
+[dev-dependencies]

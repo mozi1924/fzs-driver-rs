@@ -1,0 +1,13 @@
+[package]
+name = "fzs-halftone"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+fzs-protocol.workspace = true
+image.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]

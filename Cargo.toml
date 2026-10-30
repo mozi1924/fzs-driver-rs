@@ -1,0 +1,39 @@
+[workspace]
+members = [
+    "crates/fzs-protocol",
+    "crates/fzs-halftone",
+    "crates/fzs-cups",
+    "crates/fzs-transport",
+    "crates/fzs-daemon",
+    "crates/fzs-cli",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+fzs-protocol = { path = "crates/fzs-protocol" }
+fzs-halftone = { path = "crates/fzs-halftone" }
+fzs-cups = { path = "crates/fzs-cups" }
+fzs-transport = { path = "crates/fzs-transport" }
+fzs-daemon = { path = "crates/fzs-daemon" }
+
+tokio = { version = "1.38", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "1.0"
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"
+dirs = "5.0"
+byteorder = "1.5"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "tiff", "webp"] }
+btleplug = "0.13"
+serialport = "4.5"
+clap = { version = "4.5", features = ["derive"] }
+minilzo-rs = "0.6.1"
+futures = "0.3"
+uuid = { version = "1.8", features = ["v4"] }

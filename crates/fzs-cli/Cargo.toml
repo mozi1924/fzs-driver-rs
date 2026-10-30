@@ -1,0 +1,25 @@
+[package]
+name = "fzs-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "fzs-printer"
+path = "src/main.rs"
+
+[dependencies]
+fzs-protocol.workspace = true
+fzs-halftone.workspace = true
+fzs-cups.workspace = true
+fzs-transport.workspace = true
+fzs-daemon.workspace = true
+clap.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
+dirs.workspace = true
+image.workspace = true
+
+[dev-dependencies]

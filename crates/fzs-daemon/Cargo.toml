@@ -1,0 +1,18 @@
+[package]
+name = "fzs-daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+fzs-protocol.workspace = true
+fzs-halftone.workspace = true
+fzs-cups.workspace = true
+fzs-transport.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+image.workspace = true
+
+[dev-dependencies]
