@@ -101,3 +101,9 @@ cargo run -p fzs-cli -- print photo.jpg --dither floyd-steinberg --density 190
 cargo test --workspace
 ```
 28 项跨语言数学回归测试与端到端 CUPS 光栅解码测试全部通过。
+
+---
+
+## 开源许可 (License)
+
+本项目遵循 **GNU General Public License v3.0 or later (SPDX: GPL-3.0-or-later)** 开源协议。
