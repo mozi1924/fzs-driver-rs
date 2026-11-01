@@ -1,9 +1,13 @@
 import init, {
     generate_preview_from_rgba,
     encode_print_job_from_rgba,
+    get_motor_aspect_ratio,
     parse_printer_qr
 } from './wasm/fzs_wasm.js';
 import { PrinterTransport } from './transport.js';
+
+// Physical motor aspect ratio compensation (3292 physical lines / 2380 logical lines ≈ 1.38319)
+let motorAspectRatio = 3292.0 / 2380.0;
 
 // Global Application State
 const state = {
@@ -82,6 +86,9 @@ async function bootstrapWasm() {
     try {
         await init('./wasm/fzs_wasm_bg.wasm');
         state.wasmLoaded = true;
+        try {
+            motorAspectRatio = get_motor_aspect_ratio();
+        } catch (_) {}
         console.log('✓ FZS WASM module initialized successfully');
         loadSampleTestPattern();
     } catch (err) {
@@ -226,6 +233,9 @@ btnPdfNext.addEventListener('click', () => {
 function loadBitmapToState(bitmap) {
     offscreenCanvas.width = bitmap.width;
     offscreenCanvas.height = bitmap.height;
+    // Fill white background for transparent images (e.g. PNG) so transparent areas don't turn black
+    offscreenCtx.fillStyle = '#ffffff';
+    offscreenCtx.fillRect(0, 0, bitmap.width, bitmap.height);
     offscreenCtx.drawImage(bitmap, 0, 0);
     const imgData = offscreenCtx.getImageData(0, 0, bitmap.width, bitmap.height);
 
@@ -327,19 +337,83 @@ function renderCanvasView() {
         previewCtx.putImageData(imgData, 0, 0);
     } else {
         // Document Layout View
-        previewCtx.fillStyle = '#ffffff';
-        previewCtx.fillRect(0, 0, width, height);
-        previewCtx.drawImage(offscreenCanvas, 0, 0, width, height);
+        renderDocumentLayoutView(width, height);
     }
 
     // Apply scale and styling to paperSheet
     applyPaperScale(width, height);
 }
 
+function renderDocumentLayoutView(canvasWidth, canvasHeight) {
+    // Fill white thermal paper background
+    previewCtx.fillStyle = '#ffffff';
+    previewCtx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+    if (!offscreenCanvas.width || !offscreenCanvas.height) return;
+
+    // Logical dimensions in square 203 DPI dots
+    const logicalHeight = state.activePreviewData?.logical_height || Math.round(canvasHeight / motorAspectRatio);
+
+    // Check if auto-rotation occurred (matches Rust prepare_image: auto_rotate && w > h)
+    const shouldRotate = state.config.auto_rotate && (offscreenCanvas.width > offscreenCanvas.height);
+    const srcW = shouldRotate ? offscreenCanvas.height : offscreenCanvas.width;
+    const srcH = shouldRotate ? offscreenCanvas.width : offscreenCanvas.height;
+
+    // Calculate layout in logical (square) coordinates (canvasWidth x logicalHeight)
+    let destW, destH, destX, destY;
+    const fit = state.config.fit_mode;
+
+    if (fit === 'width') {
+        const scale = canvasWidth / srcW;
+        destW = canvasWidth;
+        destH = srcH * scale;
+        destX = 0;
+        destY = 0;
+    } else if (fit === 'original') {
+        const scale = srcW > canvasWidth ? (canvasWidth / srcW) : 1.0;
+        destW = srcW * scale;
+        destH = srcH * scale;
+        destX = (canvasWidth - destW) / 2;
+        destY = 0;
+    } else {
+        // 'page' mode (default): scale to fit inside page and center
+        const scale = Math.min(canvasWidth / srcW, logicalHeight / srcH);
+        destW = srcW * scale;
+        destH = srcH * scale;
+        destX = (canvasWidth - destW) / 2;
+        destY = (logicalHeight - destH) / 2;
+    }
+
+    // Apply motor aspect ratio scaling to coordinate space Y so it matches preview_rgba layout
+    previewCtx.save();
+    previewCtx.scale(1, motorAspectRatio);
+
+    if (shouldRotate) {
+        // Rotate 270 degrees clockwise around center of destination rect
+        previewCtx.translate(destX + destW / 2, destY + destH / 2);
+        previewCtx.rotate(-Math.PI / 2);
+        previewCtx.drawImage(
+            offscreenCanvas,
+            -destH / 2,
+            -destW / 2,
+            destH,
+            destW
+        );
+    } else {
+        previewCtx.drawImage(offscreenCanvas, destX, destY, destW, destH);
+    }
+
+    previewCtx.restore();
+}
+
 function applyPaperScale(width, height) {
     // 1 dot @ 203 DPI ≈ 0.125 mm
+    // Hardware motor scanlines are at 281.5 DPI (0.0902 mm/line).
+    // Compensate for the physical motor aspect ratio (1.38319) so the on-screen preview
+    // is rendered with square pixels matching actual printed proportions (WYSIWYG).
+    const logicalHeight = state.activePreviewData?.logical_height || Math.round(height / motorAspectRatio);
     const cssWidth = Math.round(width * 0.45 * state.zoom);
-    const cssHeight = Math.round(height * 0.45 * state.zoom);
+    const cssHeight = Math.round(logicalHeight * 0.45 * state.zoom);
 
     paperSheet.style.width = `${cssWidth}px`;
     paperSheet.style.height = `${cssHeight}px`;

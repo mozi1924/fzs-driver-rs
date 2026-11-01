@@ -89,6 +89,7 @@ impl Default for WasmPrintConfig {
 pub struct PreviewResult {
     pub width: u32,
     pub height: u32,
+    pub logical_height: u32,
     pub slice_count: usize,
     pub paper_length_mm: f32,
     pub preview_rgba: Vec<u8>,
@@ -132,6 +133,12 @@ fn parse_paper_spec(s: &str) -> PaperSpec {
         "spec2" => PaperSpec::Spec2,
         _ => PaperSpec::Spec1,
     }
+}
+
+/// Get the physical motor aspect ratio compensation constant (3292 / 2380 ≈ 1.38319).
+#[wasm_bindgen]
+pub fn get_motor_aspect_ratio() -> f64 {
+    MOTOR_ASPECT_RATIO
 }
 
 /// Parse a printer QR string (e.g. from camera scan) and return device profile.
@@ -238,10 +245,12 @@ fn render_preview_internal(
     // 203 DPI = 8 dots/mm. Considering motor aspect ratio (1.383), physical mm length is:
     let physical_dots_y = (h as f64) / MOTOR_ASPECT_RATIO;
     let paper_length_mm = (physical_dots_y / 8.0) as f32;
+    let logical_height = physical_dots_y.round() as u32;
 
     let result = PreviewResult {
         width: w,
         height: h,
+        logical_height,
         slice_count: chunks.len(),
         paper_length_mm,
         preview_rgba,
@@ -400,6 +409,12 @@ mod tests {
         assert_eq!(cfg.dither, "smart_hybrid");
         assert_eq!(cfg.density, 180);
         assert_eq!(cfg.threshold, 180);
+    }
+
+    #[test]
+    fn test_motor_aspect_ratio() {
+        let ratio = get_motor_aspect_ratio();
+        assert!((ratio - (3292.0 / 2380.0)).abs() < 1e-6);
     }
 }
 
