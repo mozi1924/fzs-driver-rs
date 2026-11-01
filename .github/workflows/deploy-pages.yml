@@ -40,9 +40,6 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Install wasm-bindgen-cli
-        uses: taiki-e/install-action@wasm-bindgen-cli
-
       - name: Build WebAssembly & Bundle WebUI
         run: ./scripts/build_web.sh
 
