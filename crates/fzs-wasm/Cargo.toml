@@ -1,0 +1,17 @@
+[package]
+name = "fzs-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+fzs-protocol.workspace = true
+fzs-halftone.workspace = true
+image.workspace = true
+wasm-bindgen = "0.2"
+serde.workspace = true
+serde-wasm-bindgen = "0.6"
+js-sys = "0.3"

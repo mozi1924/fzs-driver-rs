@@ -77,6 +77,16 @@ enum Commands {
     },
     /// Query the printer hardware firmware version string
     Version,
+    /// Launch the browser WebUI for offline printing and live paper preview
+    Web {
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
+        #[arg(long, default_value_t = 8080)]
+        port: u16,
+        /// Automatically open default browser
+        #[arg(long, default_value_t = true)]
+        open: bool,
+    },
 }
 
 #[derive(Args)]
@@ -293,9 +303,107 @@ async fn main() -> Result<()> {
         Commands::Version => {
             handle_version().await?;
         }
+        Commands::Web { host, port, open } => {
+            handle_web(&host, port, open).await?;
+        }
     }
 
     Ok(())
+}
+
+async fn handle_web(host: &str, port: u16, open: bool) -> Result<()> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    let addr = format!("{}:{}", host, port);
+    let listener = TcpListener::bind(&addr)
+        .await
+        .with_context(|| format!("Failed to bind web server to {}", addr))?;
+
+    let url = format!("http://{}:{}", host, port);
+    println!("🌐 FZS Thermal Studio WebUI is running at: {}", url);
+    println!("   Direct in-browser printing with Web Bluetooth & Web Serial");
+    println!("   Press Ctrl+C to terminate");
+
+    if open {
+        #[cfg(target_os = "macos")]
+        let _ = std::process::Command::new("open").arg(&url).spawn();
+        #[cfg(target_os = "linux")]
+        let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+        #[cfg(target_os = "windows")]
+        let _ = std::process::Command::new("cmd").args(["/c", "start", &url]).spawn();
+    }
+
+    let web_root = std::env::current_dir()?.join("web");
+    let wasm_file = web_root.join("wasm").join("fzs_wasm_bg.wasm");
+    if !wasm_file.exists() {
+        eprintln!("⚠️  Notice: WebAssembly binary not found at {:?}", wasm_file);
+        eprintln!("   Please run `./scripts/build_web.sh` to compile the WASM core first.\n");
+    }
+
+    loop {
+        let (mut socket, _) = match listener.accept().await {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        let root = web_root.clone();
+        tokio::spawn(async move {
+            let mut buf = [0u8; 2048];
+            let n = match socket.read(&mut buf).await {
+                Ok(n) if n > 0 => n,
+                _ => return,
+            };
+
+            let req_str = String::from_utf8_lossy(&buf[..n]);
+            let first_line = req_str.lines().next().unwrap_or("");
+            let parts: Vec<&str> = first_line.split_whitespace().collect();
+            if parts.len() < 2 || parts[0] != "GET" {
+                let _ = socket
+                    .write_all(b"HTTP/1.1 405 Method Not Allowed\r\n\r\n")
+                    .await;
+                return;
+            }
+
+            let mut req_path = parts[1].trim_start_matches('/');
+            if req_path.is_empty() || req_path == "/" {
+                req_path = "index.html";
+            }
+            let req_path = req_path.split('?').next().unwrap_or(req_path);
+
+            let file_path = root.join(req_path);
+            if file_path.exists() && file_path.is_file() {
+                if let Ok(content) = tokio::fs::read(&file_path).await {
+                    let content_type = match file_path
+                        .extension()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("")
+                    {
+                        "html" => "text/html; charset=utf-8",
+                        "js" | "mjs" => "application/javascript; charset=utf-8",
+                        "wasm" => "application/wasm",
+                        "css" => "text/css; charset=utf-8",
+                        "svg" => "image/svg+xml",
+                        "json" => "application/json",
+                        _ => "application/octet-stream",
+                    };
+
+                    let header = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n",
+                        content_type,
+                        content.len()
+                    );
+                    let _ = socket.write_all(header.as_bytes()).await;
+                    let _ = socket.write_all(&content).await;
+                    return;
+                }
+            }
+
+            let _ = socket
+                .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\n\r\nNot Found")
+                .await;
+        });
+    }
 }
 
 async fn handle_bind(qr_or_address: Option<String>, scan: bool) -> Result<()> {

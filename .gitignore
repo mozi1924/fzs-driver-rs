@@ -3,3 +3,11 @@
 Cargo.lock
 .DS_Store
 *.log
+
+# WASM build artifacts
+crates/fzs-wasm/pkg/
+web/wasm/
+*.wasm
+node_modules/
+dist/
+

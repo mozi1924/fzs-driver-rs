@@ -6,9 +6,18 @@
 
 ## 核心特性与技术突破
 
-1. **自包含与零系统外部 C 动态库依赖**：
-   - 彻底摆脱 `brew install lzo` 或 `libcups.dylib` 动态库依赖。MiniLZO 与 CUPS/PWG 光栅解码器 100% 静态编译入 Rust 二进制。
-2. **彻底修复 CUPS 打印中断与边距下溢 Bug**：
+1. **100% 纯 Rust 实现与零 C 代码依赖**：
+   - 彻底摒弃任何 C/C++ 依赖与系统动态库，完全使用纯 Rust 编写。
+   - LZO1X-1 压缩采用纯 Rust safe 编解码器（`lzokay`），零 libc 依赖，原生支持编译为 `wasm32-unknown-unknown`。
+2. **WebAssembly (WASM) & 浏览器直连驱动 (`fzs-wasm`)**：
+   - 将驱动协议封装、纵向电机拉伸补偿（1:1.383）与高品质半色调抖动算法全量编译为 WASM。
+   - 浏览器端利用 **Web Bluetooth API** (蓝牙) 与 **Web Serial API** (USB 串口) 直接向打印机下发切片，无需安装任何操作系统级驱动或后台守护进程。
+3. **WebUI 所见即所得排版与纸张微观预览**：
+   - 支持多页 PDF 与全格式图片拖拽解析（203 DPI 高精离线光栅化）。
+   - 支持标准 A4 折叠纸（210mm × 297mm，带穿孔撕纸线）与连续长卷纸（毫米级高度动态计算）双模式。
+   - 独家“真机热敏点阵预览 (WYSIWYG)”：无级缩放查看每一个发热点的排布，先看效果再出纸，彻底杜绝浪费热敏纸。
+4. **彻底修复 CUPS 打印中断与边距下溢 Bug**：
+
    - 跳过系统脆弱的 `rastertopwg` 过滤器（因浮点舍入导致的 unsigned 整数下溢回绕），在 PPD 中直接声明 `*cupsFilter: "application/vnd.cups-raster 0 -"`。
    - 升级为真正的 **8-bit Grayscale** 色彩模式，避免粗糙的系统 1-bit 二值化。
 3. **100% 数学与算法等价**：
@@ -52,7 +61,26 @@ cargo run -p fzs-cli -- info
 
 ---
 
-### 3. 一键配置 macOS / Linux 系统级 CUPS 打印机
+### 3. 启动 WebUI 浏览器端排版预览与直连打印
+
+无需安装 CUPS，直接在浏览器中打开全功能交互式排版与直连打印工作台：
+```bash
+# 1. 首次或修改驱动后编译 WASM
+./scripts/build_web.sh
+
+# 2. 启动本地 Web 服务器并自动打开浏览器
+cargo run -p fzs-cli -- web
+# 自动在默认浏览器中打开 http://127.0.0.1:8080
+```
+* **连接模式**：支持点击「蓝牙连接 (BLE)」通过 Web Bluetooth 无线直连，或「USB 串口连接」有线直连。
+* **文件支持**：拖入 PDF（支持多页选择）或 PNG/JPG/WebP 图片。
+* **实时纸张预览**：支持选择连续卷纸（动态计算耗纸毫米数）或 A4 标页纸（210×297mm，带穿孔线）。
+* **真机热敏点阵模拟**：实时查看由 WASM 计算生成的点阵显微级效果，动态调整二值化阈值与发热浓度。
+* **零二进制 Git 提交 & CI/CD**：二进制 `.wasm` 已被 `.gitignore` 自动过滤；代码推送到 GitHub 时由 `.github/workflows/deploy-pages.yml` 自动编译并部署到 GitHub Pages。
+
+---
+
+### 4. 一键配置 macOS / Linux 系统级 CUPS 打印机
 
 #### 注册系统打印队列并安装常驻守护进程：
 ```bash

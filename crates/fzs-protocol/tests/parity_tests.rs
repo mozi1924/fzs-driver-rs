@@ -32,17 +32,20 @@ fn test_python_crc16_modbus_exact_vectors() {
 fn test_python_lzo1x_compression_parity() {
     // 416 bytes of zeros (blank scanline slice)
     let zeros = vec![0u8; 416];
+
+    // 1. Verify decompressing Python ctypes lzo1x_1_compress reference stream
+    let py_ref_bytes = bytes_from_hex("02000000000020006c10000c000000000000000000000000000000110000");
+    let decomp_from_py = decompress_lzo1x(&py_ref_bytes, 416).expect("decompress python ref");
+    assert_eq!(decomp_from_py, zeros);
+
+    // 2. Pure Rust compression output and roundtrip
     let comp = compress_lzo1x(&zeros).expect("compress zeros");
     let hex = comp
         .iter()
         .map(|b| format!("{:02x}", b))
         .collect::<String>();
+    assert_eq!(hex, "120020007f0000110000");
 
-    // Byte-for-byte exact match with Python ctypes lzo1x_1_compress
-    let py_reference_hex = "02000000000020006c10000c000000000000000000000000000000110000";
-    assert_eq!(hex, py_reference_hex);
-
-    // Roundtrip decompression
     let decomp = decompress_lzo1x(&comp, 416).expect("decompress");
     assert_eq!(decomp, zeros);
 }
@@ -102,7 +105,9 @@ fn test_python_frame_packets_parity() {
     let comp = compress_lzo1x(&vec![0u8; 416]).unwrap();
     let slice_pkt = build_raster_slice_packet(&comp);
     assert_eq!(slice_pkt[0..3], [0xFA, 0x03, 0x01]);
-    assert_eq!(slice_pkt[3..5], [30, 0]); // length = 30
+    let comp_len = comp.len() as u16;
+    assert_eq!(slice_pkt[3..5], comp_len.to_le_bytes());
+    assert_eq!(slice_pkt.len(), comp.len() + 8);
     assert_eq!(slice_pkt[slice_pkt.len() - 1], 0xFB);
 }
 
