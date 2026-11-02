@@ -20,6 +20,9 @@ use tokio::sync::{watch, Mutex};
 use tokio::time::sleep;
 use tracing::{debug, info, warn};
 
+pub const SERVICE_UUID_00FF_PREFIX: &str = "000000ff";
+pub const SERVICE_UUID_00EE_PREFIX: &str = "000000ee";
+pub const SERVICE_UUID_FF00_PREFIX: &str = "0000ff00";
 pub const SERVICE_UUID_FFF0_PREFIX: &str = "0000fff0";
 pub const SERVICE_UUID_FFE0_PREFIX: &str = "0000ffe0";
 pub const CHAR_WRITE_PREFIX_FFF1: &str = "0000fff1";
@@ -91,7 +94,10 @@ impl BleTransport {
                     || name_lower.contains("teacher")
                     || props.services.iter().any(|u| {
                         let s = u.to_string().to_lowercase();
-                        s.starts_with(SERVICE_UUID_FFF0_PREFIX)
+                        s.starts_with(SERVICE_UUID_00FF_PREFIX)
+                            || s.starts_with(SERVICE_UUID_00EE_PREFIX)
+                            || s.starts_with(SERVICE_UUID_FF00_PREFIX)
+                            || s.starts_with(SERVICE_UUID_FFF0_PREFIX)
                             || s.starts_with(SERVICE_UUID_FFE0_PREFIX)
                     });
 

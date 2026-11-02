@@ -99,6 +99,11 @@ async function bootstrapWasm() {
 
 // 2. Hardware Connection Handlers
 btnConnectBle.addEventListener('click', async () => {
+    if (state.transport.isConnected) {
+        await state.transport.disconnect();
+        updateConnectionBadge(false);
+        return;
+    }
     try {
         const info = await state.transport.connectBle();
         updateConnectionBadge(true, info.name, 'Bluetooth');
@@ -109,6 +114,11 @@ btnConnectBle.addEventListener('click', async () => {
 });
 
 btnConnectSerial.addEventListener('click', async () => {
+    if (state.transport.isConnected) {
+        await state.transport.disconnect();
+        updateConnectionBadge(false);
+        return;
+    }
     try {
         const info = await state.transport.connectSerial();
         updateConnectionBadge(true, info.name, 'USB');
@@ -121,14 +131,45 @@ btnConnectSerial.addEventListener('click', async () => {
 function updateConnectionBadge(connected, name, type) {
     if (connected) {
         connStatus.innerHTML = `
-            <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+            <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
             <span class="text-emerald-400 font-medium">${name} (${type})</span>
         `;
+        if (type === 'Bluetooth') {
+            btnConnectBle.innerHTML = `
+                <svg class="w-3.5 h-3.5 text-rose-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+                <span>断开蓝牙</span>
+            `;
+            btnConnectBle.classList.add('border-rose-500/50', 'text-rose-300');
+        } else {
+            btnConnectSerial.innerHTML = `
+                <svg class="w-3.5 h-3.5 text-rose-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+                <span>断开 USB</span>
+            `;
+            btnConnectSerial.classList.add('border-rose-500/50', 'text-rose-300');
+        }
     } else {
         connStatus.innerHTML = `
             <span class="w-2 h-2 rounded-full bg-zinc-500"></span>
             <span>未连接打印机</span>
         `;
+        btnConnectBle.innerHTML = `
+            <svg class="w-3.5 h-3.5 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+            <span>蓝牙连接 (BLE)</span>
+        `;
+        btnConnectBle.classList.remove('border-rose-500/50', 'text-rose-300');
+        btnConnectSerial.innerHTML = `
+            <svg class="w-3.5 h-3.5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+            <span>USB 串口连接</span>
+        `;
+        btnConnectSerial.classList.remove('border-rose-500/50', 'text-rose-300');
     }
 }
 
@@ -565,6 +606,12 @@ btnPrint.addEventListener('click', async () => {
 btnCancelPrint.addEventListener('click', () => {
     state.transport.cancel();
     progressModal.classList.add('hidden');
+});
+
+window.addEventListener('beforeunload', () => {
+    if (state.transport && state.transport.isConnected) {
+        state.transport.disconnect();
+    }
 });
 
 // Start bootstrap
