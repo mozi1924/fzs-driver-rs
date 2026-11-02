@@ -334,11 +334,23 @@ async fn handle_web(host: &str, port: u16, open: bool) -> Result<()> {
         let _ = std::process::Command::new("cmd").args(["/c", "start", &url]).spawn();
     }
 
-    let web_root = std::env::current_dir()?.join("web");
-    let wasm_file = web_root.join("wasm").join("fzs_wasm_bg.wasm");
-    if !wasm_file.exists() {
-        eprintln!("⚠️  Notice: WebAssembly binary not found at {:?}", wasm_file);
-        eprintln!("   Please run `./scripts/build_web.sh` to compile the WASM core first.\n");
+    let cwd = std::env::current_dir()?;
+    let dist_dir = cwd.join("web").join("dist");
+    let web_root = if dist_dir.exists() && dist_dir.join("index.html").exists() {
+        println!("   Serving compiled production bundle from: {:?}", dist_dir);
+        dist_dir
+    } else {
+        cwd.join("web")
+    };
+
+    let has_wasm = web_root.join("wasm").join("fzs_wasm_bg.wasm").exists()
+        || (web_root.join("assets").exists() && std::fs::read_dir(web_root.join("assets")).map(|entries| {
+            entries.flatten().any(|e| e.path().extension().and_then(|ext| ext.to_str()) == Some("wasm"))
+        }).unwrap_or(false));
+
+    if !has_wasm {
+        eprintln!("⚠️  Notice: WebAssembly binary not found in web directory.");
+        eprintln!("   Please run `./scripts/build_web.sh` to compile the WASM core and web bundle.\n");
     }
 
     loop {
@@ -358,7 +370,9 @@ async fn handle_web(host: &str, port: u16, open: bool) -> Result<()> {
             let req_str = String::from_utf8_lossy(&buf[..n]);
             let first_line = req_str.lines().next().unwrap_or("");
             let parts: Vec<&str> = first_line.split_whitespace().collect();
-            if parts.len() < 2 || parts[0] != "GET" {
+            let is_get = parts[0] == "GET";
+            let is_head = parts[0] == "HEAD";
+            if parts.len() < 2 || (!is_get && !is_head) {
                 let _ = socket
                     .write_all(b"HTTP/1.1 405 Method Not Allowed\r\n\r\n")
                     .await;
@@ -394,7 +408,9 @@ async fn handle_web(host: &str, port: u16, open: bool) -> Result<()> {
                         content.len()
                     );
                     let _ = socket.write_all(header.as_bytes()).await;
-                    let _ = socket.write_all(&content).await;
+                    if is_get {
+                        let _ = socket.write_all(&content).await;
+                    }
                     return;
                 }
             }

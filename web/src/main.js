@@ -3,7 +3,15 @@ import init, {
     encode_print_job_from_rgba,
     get_motor_aspect_ratio,
     parse_printer_qr
-} from './wasm/fzs_wasm.js';
+} from '../wasm/fzs_wasm.js';
+import wasmUrl from '../wasm/fzs_wasm_bg.wasm?url';
+
+import * as pdfjsLib from 'pdfjs-dist';
+import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+
+// Configure local PDF.js worker (no external CDN)
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
+
 import { PrinterTransport } from './transport.js';
 
 // Physical motor aspect ratio compensation (3292 physical lines / 2380 logical lines ≈ 1.38319)
@@ -31,6 +39,7 @@ const state = {
     viewMode: 'dot_matrix', // 'dot_matrix' | 'document'
     zoom: 1.0,
     activePreviewData: null,
+    mobileTab: 'preview', // 'preview' | 'settings'
 };
 
 // Offscreen Canvas for pixel extraction
@@ -58,7 +67,10 @@ const autoRotateCheck = document.getElementById('autoRotateCheck');
 const invertCheck = document.getElementById('invertCheck');
 const paperLengthLabel = document.getElementById('paperLengthLabel');
 const sliceCountLabel = document.getElementById('sliceCountLabel');
+const mobilePaperLength = document.getElementById('mobilePaperLength');
+const mobileSliceCount = document.getElementById('mobileSliceCount');
 const btnPrint = document.getElementById('btnPrint');
+const btnMobilePrint = document.getElementById('btnMobilePrint');
 const previewCanvas = document.getElementById('previewCanvas');
 const previewCtx = previewCanvas.getContext('2d');
 const paperSheet = document.getElementById('paperSheet');
@@ -69,22 +81,62 @@ const btnZoomIn = document.getElementById('btnZoomIn');
 const btnZoomOut = document.getElementById('btnZoomOut');
 const btnZoomFit = document.getElementById('btnZoomFit');
 const zoomLevel = document.getElementById('zoomLevel');
+const viewportContainer = document.getElementById('viewportContainer');
+
+// Native HTML Dialog element (Modern Web Guidance)
 const progressModal = document.getElementById('progressModal');
 const progressBar = document.getElementById('progressBar');
 const progressPercent = document.getElementById('progressPercent');
 const progressSlices = document.getElementById('progressSlices');
 const btnCancelPrint = document.getElementById('btnCancelPrint');
 
-// Configure PDF.js worker
-if (window.pdfjsLib) {
-    window.pdfjsLib.GlobalWorkerOptions.workerSrc =
-        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+// Mobile Tab Elements
+const tabBtnPreview = document.getElementById('tabBtnPreview');
+const tabBtnSettings = document.getElementById('tabBtnSettings');
+const sidebarPanel = document.getElementById('sidebarPanel');
+const previewStage = document.getElementById('previewStage');
+
+// Check feature availability
+if (!('serial' in navigator)) {
+    btnConnectSerial?.classList.add('hidden');
 }
 
-// 1. Initialize WebAssembly module
+// 1. Mobile Tab Switching
+function setMobileTab(tab) {
+    state.mobileTab = tab;
+    if (tab === 'preview') {
+        tabBtnPreview?.classList.remove('bg-zinc-800', 'text-zinc-400');
+        tabBtnPreview?.classList.add('bg-blue-600', 'text-white');
+        tabBtnSettings?.classList.remove('bg-blue-600', 'text-white');
+        tabBtnSettings?.classList.add('bg-zinc-800', 'text-zinc-400');
+
+        sidebarPanel?.classList.add('hidden');
+        sidebarPanel?.classList.remove('flex');
+        previewStage?.classList.remove('hidden');
+        previewStage?.classList.add('flex');
+
+        // Re-fit view if needed
+        requestAnimationFrame(() => renderCanvasView());
+    } else {
+        tabBtnSettings?.classList.remove('bg-zinc-800', 'text-zinc-400');
+        tabBtnSettings?.classList.add('bg-blue-600', 'text-white');
+        tabBtnPreview?.classList.remove('bg-blue-600', 'text-white');
+        tabBtnPreview?.classList.add('bg-zinc-800', 'text-zinc-400');
+
+        sidebarPanel?.classList.remove('hidden');
+        sidebarPanel?.classList.add('flex');
+        previewStage?.classList.add('hidden');
+        previewStage?.classList.remove('flex');
+    }
+}
+
+tabBtnPreview?.addEventListener('click', () => setMobileTab('preview'));
+tabBtnSettings?.addEventListener('click', () => setMobileTab('settings'));
+
+// 2. Initialize WebAssembly module via local URL
 async function bootstrapWasm() {
     try {
-        await init('./wasm/fzs_wasm_bg.wasm');
+        await init(wasmUrl);
         state.wasmLoaded = true;
         try {
             motorAspectRatio = get_motor_aspect_ratio();
@@ -97,8 +149,8 @@ async function bootstrapWasm() {
     }
 }
 
-// 2. Hardware Connection Handlers
-btnConnectBle.addEventListener('click', async () => {
+// 3. Hardware Connection Handlers
+btnConnectBle?.addEventListener('click', async () => {
     if (state.transport.isConnected) {
         await state.transport.disconnect();
         updateConnectionBadge(false);
@@ -109,11 +161,13 @@ btnConnectBle.addEventListener('click', async () => {
         updateConnectionBadge(true, info.name, 'Bluetooth');
     } catch (err) {
         console.error('BLE connection failed:', err);
-        alert(`蓝牙连接失败: ${err.message}`);
+        if (err.name !== 'NotFoundError') {
+            alert(`蓝牙连接失败: ${err.message}`);
+        }
     }
 });
 
-btnConnectSerial.addEventListener('click', async () => {
+btnConnectSerial?.addEventListener('click', async () => {
     if (state.transport.isConnected) {
         await state.transport.disconnect();
         updateConnectionBadge(false);
@@ -124,27 +178,30 @@ btnConnectSerial.addEventListener('click', async () => {
         updateConnectionBadge(true, info.name, 'USB');
     } catch (err) {
         console.error('Serial connection failed:', err);
-        alert(`串口连接失败: ${err.message}`);
+        if (err.name !== 'NotFoundError') {
+            alert(`串口连接失败: ${err.message}`);
+        }
     }
 });
 
-function updateConnectionBadge(connected, name, type) {
+function updateConnectionBadge(connected, name = '', type = '') {
     if (connected) {
         connStatus.innerHTML = `
             <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-            <span class="text-emerald-400 font-medium">${name} (${type})</span>
+            <span class="text-emerald-400 font-medium truncate max-w-[120px] sm:max-w-none">${name} (${type})</span>
         `;
         if (type === 'Bluetooth') {
             btnConnectBle.innerHTML = `
-                <svg class="w-3.5 h-3.5 text-rose-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg class="w-3.5 h-3.5 text-rose-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
                 </svg>
-                <span>断开蓝牙</span>
+                <span class="hidden sm:inline">断开蓝牙</span>
+                <span class="sm:hidden">断开</span>
             `;
             btnConnectBle.classList.add('border-rose-500/50', 'text-rose-300');
         } else {
             btnConnectSerial.innerHTML = `
-                <svg class="w-3.5 h-3.5 text-rose-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg class="w-3.5 h-3.5 text-rose-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
                 </svg>
                 <span>断开 USB</span>
@@ -154,22 +211,26 @@ function updateConnectionBadge(connected, name, type) {
     } else {
         connStatus.innerHTML = `
             <span class="w-2 h-2 rounded-full bg-zinc-500"></span>
-            <span>未连接打印机</span>
+            <span class="hidden sm:inline">未连接打印机</span>
+            <span class="sm:hidden">未连接</span>
         `;
         btnConnectBle.innerHTML = `
-            <svg class="w-3.5 h-3.5 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+            <svg class="w-3.5 h-3.5 text-blue-400 shrink-0" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M14.88 16.29L13 18.17V14.41M13 5.83l1.88 1.88L13 9.59m0-7.59L7 8l4.5 4.5L7 17l6 5V13.41l3.59 3.59 1.41-1.41L13.83 11.41 18 7.24 16.59 5.83 13 9.41V2z"/>
             </svg>
-            <span>蓝牙连接 (BLE)</span>
+            <span class="hidden sm:inline">蓝牙连接 (BLE)</span>
+            <span class="sm:hidden">蓝牙</span>
         `;
         btnConnectBle.classList.remove('border-rose-500/50', 'text-rose-300');
-        btnConnectSerial.innerHTML = `
-            <svg class="w-3.5 h-3.5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-            </svg>
-            <span>USB 串口连接</span>
-        `;
-        btnConnectSerial.classList.remove('border-rose-500/50', 'text-rose-300');
+        if (btnConnectSerial) {
+            btnConnectSerial.innerHTML = `
+                <svg class="w-3.5 h-3.5 text-emerald-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+                <span>USB 串口</span>
+            `;
+            btnConnectSerial.classList.remove('border-rose-500/50', 'text-rose-300');
+        }
     }
 }
 
@@ -179,8 +240,8 @@ state.transport.onStatusChange = (val) => {
     }
 };
 
-// 3. QR Code Scanner / Paste
-btnScanQr.addEventListener('click', () => {
+// 4. QR Code Scanner / Paste
+btnScanQr?.addEventListener('click', () => {
     const qr = prompt('请输入或粘贴打印机背面的二维码信息 (如: C8:F0:9E:C3:10:0A&FZJJD340654&FZS-C3100A):');
     if (!qr) return;
 
@@ -194,24 +255,24 @@ btnScanQr.addEventListener('click', () => {
     }
 });
 
-// 4. File Drag & Drop and Upload
-dropzone.addEventListener('click', () => fileInput.click());
-fileInput.addEventListener('change', (e) => {
+// 5. File Drag & Drop and Upload
+dropzone?.addEventListener('click', () => fileInput.click());
+fileInput?.addEventListener('change', (e) => {
     if (e.target.files.length > 0) {
         handleFile(e.target.files[0]);
     }
 });
 
-dropzone.addEventListener('dragover', (e) => {
+dropzone?.addEventListener('dragover', (e) => {
     e.preventDefault();
     dropzone.classList.add('border-blue-500', 'bg-blue-500/10');
 });
 
-dropzone.addEventListener('dragleave', () => {
+dropzone?.addEventListener('dragleave', () => {
     dropzone.classList.remove('border-blue-500', 'bg-blue-500/10');
 });
 
-dropzone.addEventListener('drop', (e) => {
+dropzone?.addEventListener('drop', (e) => {
     e.preventDefault();
     dropzone.classList.remove('border-blue-500', 'bg-blue-500/10');
     if (e.dataTransfer.files.length > 0) {
@@ -222,21 +283,27 @@ dropzone.addEventListener('drop', (e) => {
 async function handleFile(file) {
     if (file.type === 'application/pdf') {
         const arrayBuffer = await file.arrayBuffer();
-        const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
         state.pdfDoc = pdf;
         state.pdfPage = 1;
         state.pdfTotalPages = pdf.numPages;
         pdfControls.classList.remove('hidden');
         await renderPdfPage(1);
+        if (window.innerWidth < 1024) {
+            setMobileTab('preview');
+        }
     } else if (file.type.startsWith('image/')) {
         pdfControls.classList.add('hidden');
         state.pdfDoc = null;
         const bitmap = await createImageBitmap(file);
         loadBitmapToState(bitmap);
+        if (window.innerWidth < 1024) {
+            setMobileTab('preview');
+        }
     }
 }
 
-// 5. PDF Rendering to Offscreen Canvas at 203 DPI
+// 6. PDF Rendering to Offscreen Canvas at 203 DPI
 async function renderPdfPage(pageNum) {
     if (!state.pdfDoc) return;
     state.pdfPage = pageNum;
@@ -264,17 +331,17 @@ async function renderPdfPage(pageNum) {
     triggerPreviewUpdate();
 }
 
-btnPdfPrev.addEventListener('click', () => {
+btnPdfPrev?.addEventListener('click', () => {
     if (state.pdfPage > 1) renderPdfPage(state.pdfPage - 1);
 });
-btnPdfNext.addEventListener('click', () => {
+btnPdfNext?.addEventListener('click', () => {
     if (state.pdfPage < state.pdfTotalPages) renderPdfPage(state.pdfPage + 1);
 });
 
 function loadBitmapToState(bitmap) {
     offscreenCanvas.width = bitmap.width;
     offscreenCanvas.height = bitmap.height;
-    // Fill white background for transparent images (e.g. PNG) so transparent areas don't turn black
+    // Fill white background for transparent images so transparent areas don't turn black
     offscreenCtx.fillStyle = '#ffffff';
     offscreenCtx.fillRect(0, 0, bitmap.width, bitmap.height);
     offscreenCtx.drawImage(bitmap, 0, 0);
@@ -297,7 +364,6 @@ function loadSampleTestPattern() {
     offscreenCanvas.width = w;
     offscreenCanvas.height = h;
 
-    // Draw a nice gradient + text test pattern
     offscreenCtx.fillStyle = '#ffffff';
     offscreenCtx.fillRect(0, 0, w, h);
 
@@ -335,7 +401,7 @@ function loadSampleTestPattern() {
     triggerPreviewUpdate();
 }
 
-// 6. Reactive Preview Updates via WASM
+// 7. Reactive Preview Updates via WASM
 let updateTimer = null;
 function triggerPreviewUpdate() {
     clearTimeout(updateTimer);
@@ -356,8 +422,13 @@ function executeWasmPreview() {
         );
 
         state.activePreviewData = res;
-        paperLengthLabel.textContent = `${res.paper_length_mm.toFixed(1)} mm`;
-        sliceCountLabel.textContent = `${res.slice_count.toLocaleString()} slices`;
+        const lengthText = `${res.paper_length_mm.toFixed(1)} mm`;
+        const sliceText = `${res.slice_count.toLocaleString()} slices`;
+
+        paperLengthLabel.textContent = lengthText;
+        sliceCountLabel.textContent = sliceText;
+        if (mobilePaperLength) mobilePaperLength.textContent = lengthText;
+        if (mobileSliceCount) mobileSliceCount.textContent = sliceText;
 
         renderCanvasView();
     } catch (err) {
@@ -377,11 +448,9 @@ function renderCanvasView() {
         const imgData = new ImageData(clamped, width, height);
         previewCtx.putImageData(imgData, 0, 0);
     } else {
-        // Document Layout View
         renderDocumentLayoutView(width, height);
     }
 
-    // Apply scale and styling to paperSheet
     applyPaperScale(width, height);
 }
 
@@ -392,15 +461,11 @@ function renderDocumentLayoutView(canvasWidth, canvasHeight) {
 
     if (!offscreenCanvas.width || !offscreenCanvas.height) return;
 
-    // Logical dimensions in square 203 DPI dots
     const logicalHeight = state.activePreviewData?.logical_height || Math.round(canvasHeight / motorAspectRatio);
-
-    // Check if auto-rotation occurred (matches Rust prepare_image: auto_rotate && w > h)
     const shouldRotate = state.config.auto_rotate && (offscreenCanvas.width > offscreenCanvas.height);
     const srcW = shouldRotate ? offscreenCanvas.height : offscreenCanvas.width;
     const srcH = shouldRotate ? offscreenCanvas.width : offscreenCanvas.height;
 
-    // Calculate layout in logical (square) coordinates (canvasWidth x logicalHeight)
     let destW, destH, destX, destY;
     const fit = state.config.fit_mode;
 
@@ -417,7 +482,7 @@ function renderDocumentLayoutView(canvasWidth, canvasHeight) {
         destX = (canvasWidth - destW) / 2;
         destY = 0;
     } else {
-        // 'page' mode (default): scale to fit inside page and center
+        // 'page' mode (default)
         const scale = Math.min(canvasWidth / srcW, logicalHeight / srcH);
         destW = srcW * scale;
         destH = srcH * scale;
@@ -425,12 +490,10 @@ function renderDocumentLayoutView(canvasWidth, canvasHeight) {
         destY = (logicalHeight - destH) / 2;
     }
 
-    // Apply motor aspect ratio scaling to coordinate space Y so it matches preview_rgba layout
     previewCtx.save();
     previewCtx.scale(1, motorAspectRatio);
 
     if (shouldRotate) {
-        // Rotate 270 degrees clockwise around center of destination rect
         previewCtx.translate(destX + destW / 2, destY + destH / 2);
         previewCtx.rotate(-Math.PI / 2);
         previewCtx.drawImage(
@@ -448,20 +511,20 @@ function renderDocumentLayoutView(canvasWidth, canvasHeight) {
 }
 
 function applyPaperScale(width, height) {
-    // 1 dot @ 203 DPI ≈ 0.125 mm
-    // Hardware motor scanlines are at 281.5 DPI (0.0902 mm/line).
-    // Compensate for the physical motor aspect ratio (1.38319) so the on-screen preview
-    // is rendered with square pixels matching actual printed proportions (WYSIWYG).
     const logicalHeight = state.activePreviewData?.logical_height || Math.round(height / motorAspectRatio);
-    const cssWidth = Math.round(width * 0.45 * state.zoom);
-    const cssHeight = Math.round(logicalHeight * 0.45 * state.zoom);
+    
+    // Calculate responsive base scale for mobile vs desktop
+    const containerW = viewportContainer.clientWidth - 32;
+    const baseScale = containerW < 500 ? Math.min(0.45, containerW / width) : 0.45;
+
+    const cssWidth = Math.round(width * baseScale * state.zoom);
+    const cssHeight = Math.round(logicalHeight * baseScale * state.zoom);
 
     paperSheet.style.width = `${cssWidth}px`;
     paperSheet.style.height = `${cssHeight}px`;
     previewCanvas.style.width = `${cssWidth}px`;
     previewCanvas.style.height = `${cssHeight}px`;
 
-    // Perforation line for A4 Folded
     if (state.config.paper_type === 'folded') {
         perforationLine.classList.remove('hidden');
     } else {
@@ -469,47 +532,54 @@ function applyPaperScale(width, height) {
     }
 }
 
-// View Mode Toggles
-btnViewDotMatrix.addEventListener('click', () => {
+// 8. View Mode Toggles
+btnViewDotMatrix?.addEventListener('click', () => {
     state.viewMode = 'dot_matrix';
-    btnViewDotMatrix.className = 'px-2.5 py-1 rounded-md bg-blue-600 text-white font-medium transition';
-    btnViewDocument.className = 'px-2.5 py-1 rounded-md text-zinc-400 hover:text-white transition';
+    btnViewDotMatrix.className = 'px-2.5 py-1 rounded-md bg-blue-600 text-white font-medium transition text-xs';
+    btnViewDocument.className = 'px-2.5 py-1 rounded-md text-zinc-400 hover:text-white transition text-xs';
     renderCanvasView();
 });
 
-btnViewDocument.addEventListener('click', () => {
+btnViewDocument?.addEventListener('click', () => {
     state.viewMode = 'document';
-    btnViewDocument.className = 'px-2.5 py-1 rounded-md bg-blue-600 text-white font-medium transition';
-    btnViewDotMatrix.className = 'px-2.5 py-1 rounded-md text-zinc-400 hover:text-white transition';
+    btnViewDocument.className = 'px-2.5 py-1 rounded-md bg-blue-600 text-white font-medium transition text-xs';
+    btnViewDotMatrix.className = 'px-2.5 py-1 rounded-md text-zinc-400 hover:text-white transition text-xs';
     renderCanvasView();
 });
 
-// Zoom Controls
-btnZoomIn.addEventListener('click', () => {
+// 9. Zoom Controls
+btnZoomIn?.addEventListener('click', () => {
     state.zoom = Math.min(3.0, state.zoom + 0.2);
     zoomLevel.textContent = `${Math.round(state.zoom * 100)}%`;
     renderCanvasView();
 });
-btnZoomOut.addEventListener('click', () => {
+btnZoomOut?.addEventListener('click', () => {
     state.zoom = Math.max(0.3, state.zoom - 0.2);
     zoomLevel.textContent = `${Math.round(state.zoom * 100)}%`;
     renderCanvasView();
 });
-btnZoomFit.addEventListener('click', () => {
+btnZoomFit?.addEventListener('click', () => {
     state.zoom = 1.0;
     zoomLevel.textContent = '100%';
     renderCanvasView();
 });
 
-// Parameter Control Bindings
+// Resize Observer to adapt paper scale smoothly on mobile orientation / window resize
+window.addEventListener('resize', () => {
+    if (state.activePreviewData) {
+        applyPaperScale(state.activePreviewData.width, state.activePreviewData.height);
+    }
+});
+
+// 10. Parameter Control Bindings
 document.querySelectorAll('.paper-type-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
         document.querySelectorAll('.paper-type-btn').forEach((b) => {
-            b.className = 'paper-type-btn px-3 py-2 rounded-lg border text-xs font-medium text-left transition flex items-center gap-2 border-zinc-700 bg-zinc-800/60 text-zinc-400';
+            b.className = 'paper-type-btn min-h-[44px] px-3 py-2 rounded-lg border text-xs font-medium text-left transition flex items-center gap-2 border-zinc-700 bg-zinc-800/60 text-zinc-400';
             b.querySelector('span').className = 'w-2 h-2 rounded-full bg-zinc-600';
         });
 
-        btn.className = 'paper-type-btn active px-3 py-2 rounded-lg border text-xs font-medium text-left transition flex items-center gap-2 border-blue-500 bg-blue-500/10 text-white';
+        btn.className = 'paper-type-btn active min-h-[44px] px-3 py-2 rounded-lg border text-xs font-medium text-left transition flex items-center gap-2 border-blue-500 bg-blue-500/10 text-white';
         btn.querySelector('span').className = 'w-2 h-2 rounded-full bg-blue-500';
 
         state.config.paper_type = btn.dataset.type;
@@ -517,46 +587,50 @@ document.querySelectorAll('.paper-type-btn').forEach((btn) => {
     });
 });
 
-fitModeSelect.addEventListener('change', (e) => {
+fitModeSelect?.addEventListener('change', (e) => {
     state.config.fit_mode = e.target.value;
     triggerPreviewUpdate();
 });
 
-ditherSelect.addEventListener('change', (e) => {
+ditherSelect?.addEventListener('change', (e) => {
     state.config.dither = e.target.value;
     triggerPreviewUpdate();
 });
 
-thresholdSlider.addEventListener('input', (e) => {
+thresholdSlider?.addEventListener('input', (e) => {
     state.config.threshold = parseInt(e.target.value, 10);
     thresholdVal.textContent = e.target.value;
     triggerPreviewUpdate();
 });
 
-densitySlider.addEventListener('input', (e) => {
+densitySlider?.addEventListener('input', (e) => {
     state.config.density = parseInt(e.target.value, 10);
     densityVal.textContent = e.target.value;
 });
 
-autoRotateCheck.addEventListener('change', (e) => {
+autoRotateCheck?.addEventListener('change', (e) => {
     state.config.auto_rotate = e.target.checked;
     triggerPreviewUpdate();
 });
 
-invertCheck.addEventListener('change', (e) => {
+invertCheck?.addEventListener('change', (e) => {
     state.config.invert = e.target.checked;
     triggerPreviewUpdate();
 });
 
-// 7. Direct Hardware Printing
-btnPrint.addEventListener('click', async () => {
+// 11. Direct Hardware Printing (Desktop & Mobile Shared)
+async function startPrintJob() {
     if (!state.currentSource) {
         alert('请先上传或选择要打印的图片或 PDF 文件。');
         return;
     }
 
     if (!state.transport.isConnected) {
-        const chooseBle = confirm('当前尚未连接打印机。\n点击【确定】使用蓝牙 (BLE) 连接，点击【取消】使用 USB 串口连接。');
+        const hasSerial = 'serial' in navigator;
+        let chooseBle = true;
+        if (hasSerial) {
+            chooseBle = confirm('当前尚未连接打印机。\n点击【确定】使用蓝牙 (BLE) 连接，点击【取消】使用 USB 串口连接。');
+        }
         try {
             if (chooseBle) {
                 const info = await state.transport.connectBle();
@@ -566,7 +640,9 @@ btnPrint.addEventListener('click', async () => {
                 updateConnectionBadge(true, info.name, 'USB');
             }
         } catch (err) {
-            alert(`连接中断: ${err.message}`);
+            if (err.name !== 'NotFoundError') {
+                alert(`连接中断: ${err.message}`);
+            }
             return;
         }
     }
@@ -580,8 +656,8 @@ btnPrint.addEventListener('click', async () => {
             state.config
         );
 
-        // Step 2: Show progress modal
-        progressModal.classList.remove('hidden');
+        // Step 2: Show native progress modal (Modern Web Guidance)
+        progressModal.showModal();
         progressBar.style.width = '0%';
         progressPercent.textContent = '0%';
         progressSlices.textContent = `0 / ${packets.length} Slices`;
@@ -594,18 +670,27 @@ btnPrint.addEventListener('click', async () => {
         });
 
         setTimeout(() => {
-            progressModal.classList.add('hidden');
+            progressModal.close();
             alert('✓ 打印指令下发完毕，正在走纸出张！');
         }, 500);
     } catch (err) {
-        progressModal.classList.add('hidden');
+        progressModal.close();
         alert(`打印出错: ${err.message}`);
     }
+}
+
+btnPrint?.addEventListener('click', startPrintJob);
+btnMobilePrint?.addEventListener('click', startPrintJob);
+
+btnCancelPrint?.addEventListener('click', () => {
+    state.transport.cancel();
+    progressModal.close();
 });
 
-btnCancelPrint.addEventListener('click', () => {
+progressModal?.addEventListener('cancel', (e) => {
+    e.preventDefault();
     state.transport.cancel();
-    progressModal.classList.add('hidden');
+    progressModal.close();
 });
 
 window.addEventListener('beforeunload', () => {

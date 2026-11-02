@@ -40,6 +40,18 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: 'web/package.json'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+          cache-dependency-path: 'web/pnpm-lock.yaml'
+
       - name: Build WebAssembly & Bundle WebUI
         run: ./scripts/build_web.sh
 
@@ -49,7 +61,7 @@ jobs:
       - name: Upload Pages Artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: 'web'
+          path: 'web/dist'
 
       - name: Deploy to GitHub Pages
         id: deployment

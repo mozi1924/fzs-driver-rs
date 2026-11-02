@@ -1,0 +1,71 @@
+@import "tailwindcss";
+
+/* Base Dynamic Viewport & Mobile Safe Area Ergonomics */
+:root {
+    color-scheme: dark;
+}
+
+html, body {
+    height: 100%;
+    min-height: 100dvh;
+    overscroll-behavior-y: none;
+    -webkit-tap-highlight-color: transparent;
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+::-webkit-scrollbar-track {
+    background: #18181b;
+}
+::-webkit-scrollbar-thumb {
+    background: #3f3f46;
+    border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #52525b;
+}
+
+/* Thermal Paper Visual Effects */
+.paper-shadow {
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.6), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
+}
+
+.perforation-line {
+    background-image: linear-gradient(to right, #94a3b8 50%, rgba(255, 255, 255, 0) 0%);
+    background-position: bottom;
+    background-size: 12px 1px;
+    background-repeat: repeat-x;
+}
+
+/* Touch Control & Button Ergonomics */
+button, input, select, label {
+    touch-action: manipulation;
+}
+
+/* Modern Native Dialog Styling (Modern Web Guidance) */
+dialog:modal {
+    overscroll-behavior: contain;
+    border: none;
+    padding: 0;
+    background: transparent;
+    max-width: calc(100vw - 2rem);
+    margin: auto;
+}
+
+dialog::backdrop {
+    background: rgba(0, 0, 0, 0.75);
+    backdrop-filter: blur(8px);
+    overflow: hidden;
+    overscroll-behavior: contain;
+}
+
+/* Safe area utilities for notched devices & home indicators */
+.pb-safe {
+    padding-bottom: max(1rem, env(safe-area-inset-bottom, 1rem));
+}
+.pt-safe {
+    padding-top: max(0.75rem, env(safe-area-inset-top, 0.75rem));
+}

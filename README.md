@@ -63,20 +63,21 @@ cargo run -p fzs-cli -- info
 
 ### 3. 启动 WebUI 浏览器端排版预览与直连打印
 
-无需安装 CUPS，直接在浏览器中打开全功能交互式排版与直连打印工作台：
+无需安装 CUPS，基于 Vite、Tailwind CSS、纯 Rust WASM 与本地自包含 PDF.js 构建的离线 Web 工作台：
 ```bash
-# 1. 首次或修改驱动后编译 WASM
+# 1. 首次或修改驱动后编译 WASM 与前端自包含包
 ./scripts/build_web.sh
 
 # 2. 启动本地 Web 服务器并自动打开浏览器
 cargo run -p fzs-cli -- web
-# 自动在默认浏览器中打开 http://127.0.0.1:8080
+# 自动在默认浏览器中打开 http://127.0.0.1:8080 (亦支持手机浏览器直接访问)
 ```
-* **连接模式**：支持点击「蓝牙连接 (BLE)」通过 Web Bluetooth 无线直连，或「USB 串口连接」有线直连。
-* **文件支持**：拖入 PDF（支持多页选择）或 PNG/JPG/WebP 图片。
+* **完全离线本地自包含**：零 CDN 外部资源依赖，Tailwind CSS、PDF.js 与 WebAssembly 驱动均打包至本地运行。
+* **移动端自适应 Ergonomics**：基于现代 Web 标准构建，适配手机与平板小屏触控；提供分段视图切换（实时纸张预览 / 排版参数设置）与底部安全区便捷打印悬浮栏。
+* **连接模式**：支持点击「蓝牙连接 (BLE)」通过 Web Bluetooth 无线直连（支持桌面 Chrome/Edge 及手机端兼容浏览器），或桌面「USB 串口连接」有线直连。
+* **文件支持**：拖入或相册选择 PDF（支持多页选择）或 PNG/JPG/WebP 图片。
 * **实时纸张预览**：支持选择连续卷纸（动态计算耗纸毫米数）或 A4 标页纸（210×297mm，带穿孔线）。
 * **真机热敏点阵模拟**：实时查看由 WASM 计算生成的点阵显微级效果，动态调整二值化阈值与发热浓度。
-* **零二进制 Git 提交 & CI/CD**：二进制 `.wasm` 已被 `.gitignore` 自动过滤；代码推送到 GitHub 时由 `.github/workflows/deploy-pages.yml` 自动编译并部署到 GitHub Pages。
 
 ---
 

@@ -69,8 +69,15 @@ wasm-bindgen "${ROOT_DIR}/target/wasm32-unknown-unknown/release/fzs_wasm.wasm" \
 
 WASM_SIZE=$(du -h "${ROOT_DIR}/web/wasm/fzs_wasm_bg.wasm" | cut -f1)
 
+# 5. Build Vite self-contained frontend bundle
+if command -v pnpm &> /dev/null; then
+    echo "⚡ Building Vite self-contained frontend bundle with pnpm..."
+    (cd "${ROOT_DIR}/web" && pnpm install --frozen-lockfile && pnpm run build)
+fi
+
 echo "=========================================================="
 echo "✓ Build complete!"
 echo "  Artifact: web/wasm/fzs_wasm_bg.wasm (${WASM_SIZE})"
+echo "  Web Dist: web/dist/"
 echo "  Ready to serve: cargo run -p fzs-cli -- web"
 echo "=========================================================="
